@@ -265,8 +265,8 @@ def tabla_componente(tabla: pd.DataFrame) -> tuple[str, int]:
     return html, alto
 
 
-def generar_jpg(tabla: pd.DataFrame, etiqueta: str) -> bytes:
-    """Genera una imagen JPG del dashboard: encabezado y tabla (GENERAL destacada)."""
+def generar_jpeg(tabla: pd.DataFrame, etiqueta: str) -> bytes:
+    """Genera una imagen JPEG del dashboard: encabezado y tabla (GENERAL destacada)."""
     c2, c5 = "Notificaciones mayores a 2 minutos", "Notificaciones mayores a 5 minutos"
     gral = tabla[tabla["CHOFER"] == "GENERAL"].iloc[0]
     chof = tabla[tabla["CHOFER"] != "GENERAL"]
@@ -319,7 +319,7 @@ def generar_jpg(tabla: pd.DataFrame, etiqueta: str) -> bytes:
         y += h_fila
 
     buf = BytesIO()
-    fig.savefig(buf, format="jpg", pil_kwargs={"quality": 92})
+    fig.savefig(buf, format="jpeg", pil_kwargs={"quality": 92})
     plt.close(fig)
     return buf.getvalue()
 
@@ -453,8 +453,8 @@ with tab1:
     col_x.download_button("⬇️ Descargar Excel", a_excel(tabla.round(1)), "notificacion_por_chofer.xlsx",
                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     try:
-        col_j.download_button("🖼️ Descargar imagen (JPG)", generar_jpg(tabla, etiqueta),
-                              "dashboard_notificacion.jpg", "image/jpeg")
+        col_j.download_button("🖼️ Descargar imagen (JPEG)", generar_jpeg(tabla, etiqueta),
+                              "dashboard_notificacion.jpeg", "image/jpeg")
     except Exception as e:
         col_j.warning(f"No se pudo generar la imagen: {e}")
 
