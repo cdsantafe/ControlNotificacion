@@ -138,7 +138,18 @@ def estilizar(tabla: pd.DataFrame):
     cols = ["Notificaciones mayores a 2 minutos", "Notificaciones mayores a 5 minutos"]
     estilo = tabla.style.format({c: "{:.0f}%" for c in cols})
     aplicar = estilo.map if hasattr(estilo, "map") else estilo.applymap
-    return aplicar(color_celda, subset=cols)
+    estilo = aplicar(color_celda, subset=cols)
+
+    def resaltar_general(fila):
+        if fila["CHOFER"] != "GENERAL":
+            return [""] * len(fila)
+        return [
+            "font-weight:800;border-top:2px solid #d9a800;border-bottom:2px solid #d9a800"
+            + (";background-color:#FFC933;color:#222" if c in ("CHOFER", "Clientes") else "")
+            for c in fila.index
+        ]
+
+    return estilo.apply(resaltar_general, axis=1)
 
 
 def clase(v):
@@ -216,17 +227,7 @@ if d.empty:
 # ----------------------------------------------------------------------
 g2, g5 = pct(d["cumple_2"]), pct(d["cumple_5"])
 etiqueta = f"{desde:%d/%m/%Y}" if desde == hasta else f"{desde:%d/%m/%Y} - {hasta:%d/%m/%Y}"
-st.markdown(
-    f"""
-    <table class="resumen">
-      <tr><th>FECHA</th><th>% general mayor a 2 minutos</th><th>% general mayor a 5 minutos</th></tr>
-      <tr><td class="neu">{etiqueta}</td>
-          <td class="{clase(g2)}">{g2:.0f}%</td>
-          <td class="{clase(g5)}">{g5:.0f}%</td></tr>
-    </table>
-    """,
-    unsafe_allow_html=True,
-)
+st.markdown(f"**FECHA:** {etiqueta}")
 
 # ----------------------------------------------------------------------
 # Tabla por chofer
@@ -242,6 +243,15 @@ tabla = (
 tabla["Notificaciones mayores a 2 minutos"] *= 100
 tabla["Notificaciones mayores a 5 minutos"] *= 100
 tabla = tabla.sort_values("Notificaciones mayores a 2 minutos", ascending=False).reset_index(drop=True)
+
+# Fila GENERAL al inicio de la misma tabla (hace de encabezado con el puntaje global)
+general = pd.DataFrame([{
+    "CHOFER": "GENERAL",
+    "Clientes": len(d),
+    "Notificaciones mayores a 2 minutos": g2,
+    "Notificaciones mayores a 5 minutos": g5,
+}])
+tabla = pd.concat([general, tabla], ignore_index=True)
 
 tab1, tab2, tab3 = st.tabs(["📋 Por chofer", "📈 Evolución", "⚠️ Visitas < 2 min"])
 
