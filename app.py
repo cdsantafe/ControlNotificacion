@@ -265,8 +265,8 @@ def tabla_componente(tabla: pd.DataFrame) -> tuple[str, int]:
     return html, alto
 
 
-def generar_jpg(tabla: pd.DataFrame, d: pd.DataFrame, frecuencia: str, etiqueta: str) -> bytes:
-    """Genera una imagen JPG del dashboard: encabezado, tabla (GENERAL destacada) y evolución."""
+def generar_jpg(tabla: pd.DataFrame, etiqueta: str) -> bytes:
+    """Genera una imagen JPG del dashboard: encabezado y tabla (GENERAL destacada)."""
     c2, c5 = "Notificaciones mayores a 2 minutos", "Notificaciones mayores a 5 minutos"
     gral = tabla[tabla["CHOFER"] == "GENERAL"].iloc[0]
     chof = tabla[tabla["CHOFER"] != "GENERAL"]
@@ -274,15 +274,14 @@ def generar_jpg(tabla: pd.DataFrame, d: pd.DataFrame, frecuencia: str, etiqueta:
     # Alturas de fila (unidades) y tamaño de la figura (pulgadas)
     h_cab, h_gral, h_fila = 1.3, 1.9, 0.8
     unidades = h_cab + h_gral + h_fila * len(chof)
-    tabla_in, graf_in, graf_base, hueco, tope = unidades * 0.4, 3.4, 0.9, 0.8, 1.5
-    base_tabla = graf_base + graf_in + hueco
+    tabla_in, base_tabla, tope = unidades * 0.4, 0.4, 1.5
     alto = base_tabla + tabla_in + tope
     fig = plt.figure(figsize=(13, alto), dpi=130, facecolor="white")
 
     # Encabezado
     fig.text(0.03, 1 - 0.25 / alto, "TAREA CRÍTICA: NOTIFICACIÓN AL CLIENTE", color="#D32F2F",
              fontsize=24, fontweight="bold", va="top")
-    fig.text(0.03, 1 - 0.80 / alto, f"Objetivo: {OBJETIVO:.0f}% notificado con más de 2 minutos",
+    fig.text(0.03, 1 - 0.80 / alto, f"Objetivo: {OBJETIVO:.0f}% de los clientes notificados con más de 2 minutos de anticipación",
              color="#444", fontsize=14, fontweight="bold", va="top")
     fig.text(0.03, 1 - 1.15 / alto, f"FECHA: {etiqueta}", color="#444", fontsize=12, va="top")
 
@@ -319,17 +318,6 @@ def generar_jpg(tabla: pd.DataFrame, d: pd.DataFrame, frecuencia: str, etiqueta:
                   "#1B5E20" if bien else "#B71C1C", peso="bold")
         y += h_fila
 
-    # Gráfico de evolución según la frecuencia elegida
-    evo = d.groupby("periodo").agg(a=("cumple_2", "mean"), b=("cumple_5", "mean")).mul(100)
-    gx = fig.add_axes([0.07, graf_base / alto, 0.90, graf_in / alto])
-    gx.plot(evo.index, evo["a"], marker="o", color="#D32F2F", linewidth=2.5, label="% > 2 min")
-    gx.plot(evo.index, evo["b"], marker="o", color="#F9A825", linewidth=2.5, label="% > 5 min")
-    gx.axhline(OBJETIVO, color="green", linestyle="--", linewidth=1.5, label=f"Objetivo {OBJETIVO:.0f}%")
-    gx.set_ylim(0, 105); gx.set_ylabel("% cumplimiento")
-    gx.set_title(f"Evolución ({frecuencia.lower()})", loc="left", fontsize=13, fontweight="bold")
-    gx.grid(alpha=0.25); gx.legend(loc="lower right", fontsize=9)
-    plt.setp(gx.get_xticklabels(), rotation=45 if len(evo) > 6 else 0, ha="right" if len(evo) > 6 else "center")
-
     buf = BytesIO()
     fig.savefig(buf, format="jpg", pil_kwargs={"quality": 92})
     plt.close(fig)
@@ -351,7 +339,7 @@ def a_excel(tabla: pd.DataFrame) -> bytes:
 # Encabezado
 # ----------------------------------------------------------------------
 st.markdown('<p class="titulo">TAREA CRÍTICA: NOTIFICACIÓN AL CLIENTE</p>', unsafe_allow_html=True)
-st.markdown(f'<p class="subtitulo">Objetivo: {OBJETIVO:.0f}% notificado con más de 2 minutos</p>',
+st.markdown(f'<p class="subtitulo">Objetivo: {OBJETIVO:.0f}% de los clientes notificados con más de 2 minutos de anticipación</p>',
             unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------
@@ -465,7 +453,7 @@ with tab1:
     col_x.download_button("⬇️ Descargar Excel", a_excel(tabla.round(1)), "notificacion_por_chofer.xlsx",
                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     try:
-        col_j.download_button("🖼️ Descargar imagen (JPG)", generar_jpg(tabla, d, frecuencia, etiqueta),
+        col_j.download_button("🖼️ Descargar imagen (JPG)", generar_jpg(tabla, etiqueta),
                               "dashboard_notificacion.jpg", "image/jpeg")
     except Exception as e:
         col_j.warning(f"No se pudo generar la imagen: {e}")
