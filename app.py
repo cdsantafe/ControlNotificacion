@@ -6,6 +6,10 @@ from html import escape
 from io import BytesIO
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")  # sin interfaz gráfica (servidor)
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -261,6 +265,77 @@ def tabla_componente(tabla: pd.DataFrame) -> tuple[str, int]:
     return html, alto
 
 
+def generar_jpg(tabla: pd.DataFrame, d: pd.DataFrame, frecuencia: str, etiqueta: str) -> bytes:
+    """Genera una imagen JPG del dashboard: encabezado, tabla (GENERAL destacada) y evolución."""
+    c2, c5 = "Notificaciones mayores a 2 minutos", "Notificaciones mayores a 5 minutos"
+    gral = tabla[tabla["CHOFER"] == "GENERAL"].iloc[0]
+    chof = tabla[tabla["CHOFER"] != "GENERAL"]
+
+    # Alturas de fila (unidades) y tamaño de la figura (pulgadas)
+    h_cab, h_gral, h_fila = 1.3, 1.9, 0.8
+    unidades = h_cab + h_gral + h_fila * len(chof)
+    tabla_in, graf_in, graf_base, hueco, tope = unidades * 0.4, 3.4, 0.9, 0.8, 1.5
+    base_tabla = graf_base + graf_in + hueco
+    alto = base_tabla + tabla_in + tope
+    fig = plt.figure(figsize=(13, alto), dpi=130, facecolor="white")
+
+    # Encabezado
+    fig.text(0.03, 1 - 0.25 / alto, "TAREA CRÍTICA: NOTIFICACIÓN AL CLIENTE", color="#D32F2F",
+             fontsize=24, fontweight="bold", va="top")
+    fig.text(0.03, 1 - 0.80 / alto, f"Objetivo: {OBJETIVO:.0f}% notificado con más de 2 minutos",
+             color="#444", fontsize=14, fontweight="bold", va="top")
+    fig.text(0.03, 1 - 1.15 / alto, f"FECHA: {etiqueta}", color="#444", fontsize=12, va="top")
+
+    # Tabla dibujada a mano
+    ax = fig.add_axes([0.03, base_tabla / alto, 0.94, tabla_in / alto])
+    ax.set_xlim(0, 100); ax.set_ylim(unidades, 0); ax.axis("off")
+    anchos = [34, 12, 27, 27]
+    xs = np.cumsum([0] + anchos)
+
+    def celda(i, y, h, texto, fondo, color="#222", size=11, peso="normal", borde="#cccccc", lw=0.8, ha="center"):
+        ax.add_patch(Rectangle((xs[i], y), anchos[i], h, facecolor=fondo, edgecolor=borde, linewidth=lw))
+        x_txt = xs[i] + (1.2 if ha == "left" else anchos[i] / 2)
+        ax.text(x_txt, y + h / 2, texto, ha=ha, va="center", fontsize=size, color=color, fontweight=peso)
+
+    for i, t in enumerate(["CHOFER", "Clientes", "Notificaciones mayores\na 2 minutos",
+                           "Notificaciones mayores\na 5 minutos"]):
+        celda(i, 0, h_cab, t, "#FFC933", size=11, peso="bold", borde="#d9a800")
+
+    y = h_cab                                             # fila GENERAL
+    ok2, ok5 = gral[c2] >= OBJETIVO, gral[c5] >= OBJETIVO
+    celda(0, y, h_gral, "GENERAL", "#FFB300", size=20, peso="bold", ha="left")
+    celda(1, y, h_gral, f"{int(gral['Clientes'])}", "#FFE082", size=20, peso="bold")
+    celda(2, y, h_gral, f"{gral[c2]:.0f}%", "#2E7D32" if ok2 else "#C62828", "white", 22, "bold")
+    celda(3, y, h_gral, f"{gral[c5]:.0f}%", "#2E7D32" if ok5 else "#C62828", "white", 22, "bold")
+    ax.add_patch(Rectangle((0, y), 100, h_gral, fill=False, edgecolor="#D32F2F", linewidth=3.5))
+
+    y += h_gral                                           # choferes
+    for _, r in chof.iterrows():
+        celda(0, y, h_fila, str(r["CHOFER"]), "white", ha="left")
+        celda(1, y, h_fila, f"{int(r['Clientes'])}", "white")
+        for i, col in ((2, c2), (3, c5)):
+            bien = r[col] >= OBJETIVO
+            celda(i, y, h_fila, f"{r[col]:.0f}%", "#C8E6C9" if bien else "#FFCDD2",
+                  "#1B5E20" if bien else "#B71C1C", peso="bold")
+        y += h_fila
+
+    # Gráfico de evolución según la frecuencia elegida
+    evo = d.groupby("periodo").agg(a=("cumple_2", "mean"), b=("cumple_5", "mean")).mul(100)
+    gx = fig.add_axes([0.07, graf_base / alto, 0.90, graf_in / alto])
+    gx.plot(evo.index, evo["a"], marker="o", color="#D32F2F", linewidth=2.5, label="% > 2 min")
+    gx.plot(evo.index, evo["b"], marker="o", color="#F9A825", linewidth=2.5, label="% > 5 min")
+    gx.axhline(OBJETIVO, color="green", linestyle="--", linewidth=1.5, label=f"Objetivo {OBJETIVO:.0f}%")
+    gx.set_ylim(0, 105); gx.set_ylabel("% cumplimiento")
+    gx.set_title(f"Evolución ({frecuencia.lower()})", loc="left", fontsize=13, fontweight="bold")
+    gx.grid(alpha=0.25); gx.legend(loc="lower right", fontsize=9)
+    plt.setp(gx.get_xticklabels(), rotation=45 if len(evo) > 6 else 0, ha="right" if len(evo) > 6 else "center")
+
+    buf = BytesIO()
+    fig.savefig(buf, format="jpg", pil_kwargs={"quality": 92})
+    plt.close(fig)
+    return buf.getvalue()
+
+
 def clase(v):
     return "neu" if pd.isna(v) else ("ok" if v >= OBJETIVO else "bad")
 
@@ -386,8 +461,14 @@ with tab1:
     html_tabla, alto_tabla = tabla_componente(tabla)
     components.html(html_tabla, height=alto_tabla, scrolling=True)
     st.caption("Hacé clic en un encabezado para ordenar (▲▼). La fila GENERAL queda fija arriba.")
-    st.download_button("⬇️ Descargar Excel", a_excel(tabla.round(1)), "notificacion_por_chofer.xlsx",
-                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    col_x, col_j, _ = st.columns([1, 1, 3])
+    col_x.download_button("⬇️ Descargar Excel", a_excel(tabla.round(1)), "notificacion_por_chofer.xlsx",
+                          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    try:
+        col_j.download_button("🖼️ Descargar imagen (JPG)", generar_jpg(tabla, d, frecuencia, etiqueta),
+                              "dashboard_notificacion.jpg", "image/jpeg")
+    except Exception as e:
+        col_j.warning(f"No se pudo generar la imagen: {e}")
 
 with tab2:
     evo = (d.groupby("periodo")
