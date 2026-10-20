@@ -144,6 +144,19 @@ def preparar(df: pd.DataFrame) -> pd.DataFrame:
 
     # Hora local de la visita (para analizar la evolución durante el día)
     df["hora"] = df["arrived_at"].dt.tz_convert(ZONA_LOCAL).dt.hour
+
+    # Click en el radio: within_radius normalizado a True/False (vacío si no hay dato)
+    if "within_radius" in df.columns:
+        mapa = {"true": True, "1": True, "si": True, "sí": True, "false": False, "0": False, "no": False}
+        df["en_radio"] = df["within_radius"].astype(str).str.strip().str.lower().map(mapa)
+    else:
+        df["en_radio"] = np.nan
+    # Ruta iniciada: la planilla tiene hora de inicio de viaje
+    if "trip_start_timestamp" in df.columns:
+        df["ruta_iniciada"] = pd.to_datetime(df["trip_start_timestamp"], utc=True, errors="coerce",
+                                             format="ISO8601").notna()
+    else:
+        df["ruta_iniciada"] = True
     return df
 
 
@@ -242,23 +255,24 @@ PLANTILLA_TABLA = """
 """
 
 
-def tabla_componente(tabla: pd.DataFrame) -> tuple[str, int]:
-    """Tabla HTML ordenable (clic en encabezados) con la fila GENERAL fija arriba."""
-    c2, c5 = "Notificaciones mayores a 2 minutos", "Notificaciones mayores a 5 minutos"
+def tabla_componente(tabla: pd.DataFrame, cols_num: list, cols_pct: list,
+                     objetivo: float = OBJETIVO) -> tuple[str, int]:
+    """Tabla HTML ordenable (clic en encabezados) con la fila GENERAL fija arriba.
+    cols_num: columnas de conteo; cols_pct: columnas de porcentaje coloreadas según el objetivo."""
 
     def fila(r, clase_tr=""):
-        k2, k5 = ("ok" if r[c2] >= OBJETIVO else "bad"), ("ok" if r[c5] >= OBJETIVO else "bad")
-        return (
-            f'<tr class="{clase_tr}"><td class="nom">{escape(str(r["CHOFER"]))}</td>'
-            f'<td class="cli" data-v="{int(r["Clientes"])}">{int(r["Clientes"])}</td>'
-            f'<td class="{k2}" data-v="{r[c2]:.4f}">{r[c2]:.0f}%</td>'
-            f'<td class="{k5}" data-v="{r[c5]:.4f}">{r[c5]:.0f}%</td></tr>'
-        )
+        celdas = [f'<td class="nom">{escape(str(r["CHOFER"]))}</td>']
+        for c in cols_num:
+            celdas.append(f'<td class="cli" data-v="{int(r[c])}">{int(r[c])}</td>')
+        for c in cols_pct:
+            k = "ok" if r[c] >= objetivo else "bad"
+            celdas.append(f'<td class="{k}" data-v="{r[c]:.4f}">{r[c]:.0f}%</td>')
+        return f'<tr class="{clase_tr}">' + "".join(celdas) + "</tr>"
 
     gral = tabla[tabla["CHOFER"] == "GENERAL"].iloc[0]
     choferes = tabla[tabla["CHOFER"] != "GENERAL"]
-    cabecera = (f"<thead><tr><th>CHOFER</th><th>Clientes</th><th>{c2}</th><th>{c5}</th></tr>"
-                f"{fila(gral, 'gral')}</thead>")
+    titulos = "".join(f"<th>{escape(c)}</th>" for c in ["CHOFER", *cols_num, *cols_pct])
+    cabecera = f"<thead><tr>{titulos}</tr>{fila(gral, 'gral')}</thead>"
     html = (PLANTILLA_TABLA.replace("__CABECERA__", cabecera)
             .replace("__FILAS__", "".join(fila(r) for _, r in choferes.iterrows())))
     alto = min(190 + 38 * len(choferes), 800)
@@ -397,6 +411,8 @@ if isinstance(rango, tuple) and len(rango) == 2:
 else:
     desde = hasta = rango[0] if isinstance(rango, tuple) else rango
 
+objetivo_radio = st.sidebar.number_input("Objetivo % click en radio", 0, 100, 90, 1)
+
 choferes = sorted(datos["driver_name"].dropna().unique())
 sel_ch = st.sidebar.multiselect("Chofer", choferes, default=choferes)
 planillas = sorted(datos["tour_display_id"].dropna().astype(str).unique())
@@ -443,10 +459,12 @@ general = pd.DataFrame([{
 }])
 tabla = pd.concat([general, tabla], ignore_index=True)
 
-tab1, tab2, tab3 = st.tabs(["📋 Por chofer", "📈 Evolución", "⚠️ Visitas < 2 min"])
+tab1, tab2, tab3, tab4 = st.tabs(["📋 Por chofer", "📈 Evolución", "⚠️ Visitas < 2 min", "📍 Click en radio"])
 
 with tab1:
-    html_tabla, alto_tabla = tabla_componente(tabla)
+    html_tabla, alto_tabla = tabla_componente(
+        tabla, ["Clientes"],
+        ["Notificaciones mayores a 2 minutos", "Notificaciones mayores a 5 minutos"])
     components.html(html_tabla, height=alto_tabla, scrolling=True)
     st.caption("Hacé clic en un encabezado para ordenar (▲▼). La fila GENERAL queda fija arriba.")
     col_x, col_j, _ = st.columns([1, 1, 3])
@@ -501,3 +519,42 @@ with tab3:
     vista["Fecha"] = vista["Fecha"].dt.strftime("%Y-%m-%d")
     st.caption(f"{len(vista)} visitas sin cumplir (vacío = sin notificación registrada).")
     st.dataframe(vista, use_container_width=True, hide_index=True)
+
+with tab4:
+    st.subheader("% de click en el radio")
+    if "within_radius" not in d.columns:
+        st.warning("El archivo no tiene la columna within_radius.")
+    else:
+        # Solo planillas con ruta iniciada y entregas con hora de arribo (d ya excluye las sin arribo)
+        r = d[d["ruta_iniciada"] & d["en_radio"].notna()].copy()
+        r["en_radio"] = r["en_radio"].astype(bool)
+        if r.empty:
+            st.info("No hay visitas con ruta iniciada y arribo registrado para los filtros elegidos.")
+        else:
+            c_cli, c_fuera, c_pct = "Clientes", "Fuera del radio", "Click en el radio"
+            tr = (r.groupby("driver_name")
+                    .agg(**{c_cli: ("en_radio", "size"), c_fuera: ("en_radio", lambda x: int((~x).sum())),
+                            c_pct: ("en_radio", "mean")})
+                    .reset_index().rename(columns={"driver_name": "CHOFER"}))
+            tr[c_pct] *= 100
+            tr = tr.sort_values(c_pct, ascending=False).reset_index(drop=True)
+            gr = pd.DataFrame([{"CHOFER": "GENERAL", c_cli: len(r), c_fuera: int((~r["en_radio"]).sum()),
+                                c_pct: r["en_radio"].mean() * 100}])
+            tr = pd.concat([gr, tr], ignore_index=True)
+
+            st.markdown(f"**FECHA:** {etiqueta}  ·  Objetivo: {objetivo_radio}%")
+            html_r, alto_r = tabla_componente(tr, [c_cli, c_fuera], [c_pct], objetivo_radio)
+            components.html(html_r, height=alto_r, scrolling=True)
+            st.caption("Solo planillas con ruta iniciada y entregas con hora de arribo. "
+                       "Hacé clic en un encabezado para ordenar.")
+            st.download_button("⬇️ Descargar Excel (radio)", a_excel(tr.round(1)), "click_en_radio.xlsx",
+                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+            fuera = r[~r["en_radio"]]
+            if not fuera.empty:
+                st.markdown("**Visitas fuera del radio**")
+                cols = {"fecha": "Fecha", "driver_name": "Chofer", "tour_display_id": "Planilla",
+                        "poc_name": "Cliente", "out_of_radius_reason": "Motivo fuera de radio"}
+                det = fuera[[c for c in cols if c in fuera.columns]].rename(columns=cols).copy()
+                det["Fecha"] = det["Fecha"].dt.strftime("%Y-%m-%d")
+                st.dataframe(det, use_container_width=True, hide_index=True)
