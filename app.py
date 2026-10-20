@@ -2,6 +2,7 @@
 Dashboard de Control - TAREA CRÍTICA: NOTIFICACIÓN AL CLIENTE (BEES Deliver)
 Ejecutar local:  streamlit run app.py
 """
+from html import escape
 from io import BytesIO
 from pathlib import Path
 
@@ -36,6 +37,18 @@ st.markdown(
     .ok  {background:#C8E6C9; color:#1B5E20;}
     .bad {background:#FFCDD2; color:#B71C1C;}
     .neu {background:#FFF8E1; color:#333;}
+    .ctrl {width:100%; border-collapse:collapse; margin:6px 0 16px 0;}
+    .ctrl th {background:#FFC933; color:#222; padding:10px; text-align:center; border:1px solid #d9a800;}
+    .ctrl td {padding:8px 10px; text-align:center; border:1px solid #e0e0e0; font-size:1rem;}
+    .ctrl td.nom {text-align:left;}
+    .ctrl td.ok  {background:#C8E6C9; color:#1B5E20;}
+    .ctrl td.bad {background:#FFCDD2; color:#B71C1C;}
+    .ctrl tr.gral td {font-size:1.6rem; font-weight:800; padding:16px 10px;
+                      border-top:4px solid #D32F2F; border-bottom:4px solid #D32F2F;}
+    .ctrl tr.gral td.nom {background:#FFB300; color:#222; letter-spacing:1px;}
+    .ctrl tr.gral td.cli {background:#FFE082; color:#222;}
+    .ctrl tr.gral td.ok  {background:#2E7D32; color:#fff;}
+    .ctrl tr.gral td.bad {background:#C62828; color:#fff;}
     </style>
     """,
     unsafe_allow_html=True,
@@ -80,14 +93,15 @@ def preparar(df: pd.DataFrame) -> pd.DataFrame:
         st.stop()
 
     df = df.copy()
-    df["arrived_at"] = pd.to_datetime(df["arrived_at"], utc=True, errors="coerce")
-    df["driver_notification_time"] = pd.to_datetime(df["driver_notification_time"], utc=True, errors="coerce")
+    # format="ISO8601": acepta marcas con y sin milisegundos en la misma columna
+    df["arrived_at"] = pd.to_datetime(df["arrived_at"], utc=True, errors="coerce", format="ISO8601")
+    df["driver_notification_time"] = pd.to_datetime(df["driver_notification_time"], utc=True, errors="coerce", format="ISO8601")
 
     # Fecha de la ruta: tour_date > trip_start_timestamp > fecha de llegada
     if "tour_date" in df.columns:
         fecha = pd.to_datetime(df["tour_date"], errors="coerce")
     elif "trip_start_timestamp" in df.columns:
-        fecha = pd.to_datetime(df["trip_start_timestamp"], utc=True, errors="coerce").dt.tz_localize(None)
+        fecha = pd.to_datetime(df["trip_start_timestamp"], utc=True, errors="coerce", format="ISO8601").dt.tz_localize(None)
     else:
         fecha = df["arrived_at"].dt.tz_localize(None)
     df["fecha"] = fecha.dt.normalize()
@@ -134,22 +148,19 @@ def color_celda(v):
     return "background-color:#C8E6C9;color:#1B5E20" if v >= OBJETIVO else "background-color:#FFCDD2;color:#B71C1C"
 
 
-def estilizar(tabla: pd.DataFrame):
-    cols = ["Notificaciones mayores a 2 minutos", "Notificaciones mayores a 5 minutos"]
-    estilo = tabla.style.format({c: "{:.0f}%" for c in cols})
-    aplicar = estilo.map if hasattr(estilo, "map") else estilo.applymap
-    estilo = aplicar(color_celda, subset=cols)
-
-    def resaltar_general(fila):
-        if fila["CHOFER"] != "GENERAL":
-            return [""] * len(fila)
-        return [
-            "font-weight:800;border-top:2px solid #d9a800;border-bottom:2px solid #d9a800"
-            + (";background-color:#FFC933;color:#222" if c in ("CHOFER", "Clientes") else "")
-            for c in fila.index
-        ]
-
-    return estilo.apply(resaltar_general, axis=1)
+def tabla_html(tabla: pd.DataFrame) -> str:
+    """Tabla HTML con la fila GENERAL muy destacada como encabezado."""
+    c2, c5 = "Notificaciones mayores a 2 minutos", "Notificaciones mayores a 5 minutos"
+    filas = [f"<tr><th>CHOFER</th><th>Clientes</th><th>{c2}</th><th>{c5}</th></tr>"]
+    for _, r in tabla.iterrows():
+        gral = r["CHOFER"] == "GENERAL"
+        k2, k5 = ("ok" if r[c2] >= OBJETIVO else "bad"), ("ok" if r[c5] >= OBJETIVO else "bad")
+        filas.append(
+            f'<tr class="{"gral" if gral else ""}">'
+            f'<td class="nom">{escape(str(r["CHOFER"]))}</td><td class="cli">{int(r["Clientes"])}</td>'
+            f'<td class="{k2}">{r[c2]:.0f}%</td><td class="{k5}">{r[c5]:.0f}%</td></tr>'
+        )
+    return '<table class="ctrl">' + "".join(filas) + "</table>"
 
 
 def clase(v):
@@ -256,7 +267,7 @@ tabla = pd.concat([general, tabla], ignore_index=True)
 tab1, tab2, tab3 = st.tabs(["📋 Por chofer", "📈 Evolución", "⚠️ Visitas < 2 min"])
 
 with tab1:
-    st.dataframe(estilizar(tabla), use_container_width=True, hide_index=True)
+    st.markdown(tabla_html(tabla), unsafe_allow_html=True)
     st.download_button("⬇️ Descargar Excel", a_excel(tabla.round(1)), "notificacion_por_chofer.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
