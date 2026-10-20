@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 
 # ----------------------------------------------------------------------
 # Configuración general
@@ -37,18 +38,7 @@ st.markdown(
     .ok  {background:#C8E6C9; color:#1B5E20;}
     .bad {background:#FFCDD2; color:#B71C1C;}
     .neu {background:#FFF8E1; color:#333;}
-    .ctrl {width:100%; border-collapse:collapse; margin:6px 0 16px 0;}
-    .ctrl th {background:#FFC933; color:#222; padding:10px; text-align:center; border:1px solid #d9a800;}
-    .ctrl td {padding:8px 10px; text-align:center; border:1px solid #e0e0e0; font-size:1rem;}
-    .ctrl td.nom {text-align:left;}
-    .ctrl td.ok  {background:#C8E6C9; color:#1B5E20;}
-    .ctrl td.bad {background:#FFCDD2; color:#B71C1C;}
-    .ctrl tr.gral td {font-size:1.6rem; font-weight:800; padding:16px 10px;
                       border-top:4px solid #D32F2F; border-bottom:4px solid #D32F2F;}
-    .ctrl tr.gral td.nom {background:#FFB300; color:#222; letter-spacing:1px;}
-    .ctrl tr.gral td.cli {background:#FFE082; color:#222;}
-    .ctrl tr.gral td.ok  {background:#2E7D32; color:#fff;}
-    .ctrl tr.gral td.bad {background:#C62828; color:#fff;}
     </style>
     """,
     unsafe_allow_html=True,
@@ -148,19 +138,96 @@ def color_celda(v):
     return "background-color:#C8E6C9;color:#1B5E20" if v >= OBJETIVO else "background-color:#FFCDD2;color:#B71C1C"
 
 
-def tabla_html(tabla: pd.DataFrame) -> str:
-    """Tabla HTML con la fila GENERAL muy destacada como encabezado."""
+PLANTILLA_TABLA = """
+<style>
+  body {font-family: "Source Sans Pro", sans-serif; margin:0;}
+  #wrap {background:#fff; padding:4px;}
+  #wrap:fullscreen {padding:24px; overflow:auto;}
+  .barra {display:flex; gap:8px; justify-content:flex-end; margin-bottom:8px;}
+  .barra button {border:1px solid #d9a800; background:#FFF8E1; border-radius:6px; padding:6px 12px;
+                 cursor:pointer; font-size:.9rem;}
+  .barra button:hover {background:#FFC933;}
+  table {width:100%; border-collapse:collapse;}
+  th {background:#FFC933; color:#222; padding:10px; text-align:center; border:1px solid #d9a800;
+      cursor:pointer; user-select:none;}
+  th:hover {background:#FFB300;}
+  td {padding:8px 10px; text-align:center; border:1px solid #e0e0e0; font-size:1rem;}
+  td.nom {text-align:left;}
+  td.ok  {background:#C8E6C9; color:#1B5E20;}
+  td.bad {background:#FFCDD2; color:#B71C1C;}
+  tr.gral td {font-size:1.6rem; font-weight:800; padding:16px 10px;
+              border-top:4px solid #D32F2F; border-bottom:4px solid #D32F2F;}
+  tr.gral td.nom {background:#FFB300; color:#222; letter-spacing:1px;}
+  tr.gral td.cli {background:#FFE082; color:#222;}
+  tr.gral td.ok  {background:#2E7D32; color:#fff;}
+  tr.gral td.bad {background:#C62828; color:#fff;}
+  #wrap:fullscreen td {font-size:1.2rem;} #wrap:fullscreen tr.gral td {font-size:2rem;}
+</style>
+<div id="wrap">
+  <div class="barra">
+    <button onclick="fsTabla()">⛶ Maximizar tabla</button>
+    <button onclick="fsDash()">🖥️ Dashboard en pantalla completa</button>
+  </div>
+  <table id="t">__CABECERA__<tbody>__FILAS__</tbody></table>
+</div>
+<script>
+  const dirs = {};
+  function ordenar(i) {
+    const tb = document.querySelector('#t tbody');
+    const asc = dirs[i] === undefined ? false : !dirs[i];   // primer clic: mayor a menor
+    dirs[i] = asc;
+    const filas = Array.from(tb.rows);
+    filas.sort((a, b) => {
+      const x = a.cells[i], y = b.cells[i];
+      const vx = x.dataset.v !== undefined ? parseFloat(x.dataset.v) : x.textContent.toLowerCase();
+      const vy = y.dataset.v !== undefined ? parseFloat(y.dataset.v) : y.textContent.toLowerCase();
+      return (vx > vy ? 1 : vx < vy ? -1 : 0) * (asc ? 1 : -1);
+    });
+    filas.forEach(f => tb.appendChild(f));
+    document.querySelectorAll('#t th').forEach((th, k) => {
+      th.textContent = th.dataset.t + (k === i ? (asc ? ' ▲' : ' ▼') : '');
+    });
+  }
+  document.querySelectorAll('#t th').forEach((th, k) => {
+    th.dataset.t = th.textContent; th.onclick = () => ordenar(k);
+  });
+  function fsTabla() {
+    const w = document.getElementById('wrap');
+    if (document.fullscreenElement) { document.exitFullscreen(); return; }
+    w.requestFullscreen().catch(() => alert('Tu navegador bloqueó la pantalla completa.'));
+  }
+  function fsDash() {
+    try {
+      const d = window.parent.document;
+      if (d.fullscreenElement) { d.exitFullscreen(); return; }
+      d.documentElement.requestFullscreen().catch(() => alert('Usá F11 para pantalla completa.'));
+    } catch (e) { alert('Usá F11 para pantalla completa.'); }
+  }
+</script>
+"""
+
+
+def tabla_componente(tabla: pd.DataFrame) -> tuple[str, int]:
+    """Tabla HTML ordenable (clic en encabezados) con la fila GENERAL fija arriba."""
     c2, c5 = "Notificaciones mayores a 2 minutos", "Notificaciones mayores a 5 minutos"
-    filas = [f"<tr><th>CHOFER</th><th>Clientes</th><th>{c2}</th><th>{c5}</th></tr>"]
-    for _, r in tabla.iterrows():
-        gral = r["CHOFER"] == "GENERAL"
+
+    def fila(r, clase_tr=""):
         k2, k5 = ("ok" if r[c2] >= OBJETIVO else "bad"), ("ok" if r[c5] >= OBJETIVO else "bad")
-        filas.append(
-            f'<tr class="{"gral" if gral else ""}">'
-            f'<td class="nom">{escape(str(r["CHOFER"]))}</td><td class="cli">{int(r["Clientes"])}</td>'
-            f'<td class="{k2}">{r[c2]:.0f}%</td><td class="{k5}">{r[c5]:.0f}%</td></tr>'
+        return (
+            f'<tr class="{clase_tr}"><td class="nom">{escape(str(r["CHOFER"]))}</td>'
+            f'<td class="cli" data-v="{int(r["Clientes"])}">{int(r["Clientes"])}</td>'
+            f'<td class="{k2}" data-v="{r[c2]:.4f}">{r[c2]:.0f}%</td>'
+            f'<td class="{k5}" data-v="{r[c5]:.4f}">{r[c5]:.0f}%</td></tr>'
         )
-    return '<table class="ctrl">' + "".join(filas) + "</table>"
+
+    gral = tabla[tabla["CHOFER"] == "GENERAL"].iloc[0]
+    choferes = tabla[tabla["CHOFER"] != "GENERAL"]
+    cabecera = (f"<thead><tr><th>CHOFER</th><th>Clientes</th><th>{c2}</th><th>{c5}</th></tr>"
+                f"{fila(gral, 'gral')}</thead>")
+    html = (PLANTILLA_TABLA.replace("__CABECERA__", cabecera)
+            .replace("__FILAS__", "".join(fila(r) for _, r in choferes.iterrows())))
+    alto = min(190 + 38 * len(choferes), 800)
+    return html, alto
 
 
 def clase(v):
@@ -267,7 +334,9 @@ tabla = pd.concat([general, tabla], ignore_index=True)
 tab1, tab2, tab3 = st.tabs(["📋 Por chofer", "📈 Evolución", "⚠️ Visitas < 2 min"])
 
 with tab1:
-    st.markdown(tabla_html(tabla), unsafe_allow_html=True)
+    html_tabla, alto_tabla = tabla_componente(tabla)
+    components.html(html_tabla, height=alto_tabla, scrolling=True)
+    st.caption("Hacé clic en un encabezado para ordenar (▲▼). La fila GENERAL queda fija arriba.")
     st.download_button("⬇️ Descargar Excel", a_excel(tabla.round(1)), "notificacion_por_chofer.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
