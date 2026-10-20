@@ -50,9 +50,40 @@ st.markdown(
 def leer_archivo(origen) -> pd.DataFrame:
     """Lee CSV o Excel desde un uploader o una ruta."""
     nombre = getattr(origen, "name", str(origen)).lower()
+    if hasattr(origen, "seek"):
+        origen.seek(0)  # los archivos del uploader se releen en cada ejecución
     if nombre.endswith((".xlsx", ".xls")):
         return pd.read_excel(origen)
     return pd.read_csv(origen, sep=None, engine="python")  # detecta separador
+
+
+CLAVE_VISITA = ["tour_display_id", "visit_order", "driver_name"]
+
+
+def unir_archivos(archivos) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Lee y concatena varios archivos. Devuelve (datos, resumen por archivo).
+    Si una visita aparece en más de un archivo, se conserva la del último archivo cargado."""
+    partes, resumen = [], []
+    for a in archivos:
+        try:
+            df = leer_archivo(a)
+        except Exception as e:  # archivo ilegible: se informa y se sigue con los demás
+            st.warning(f"No se pudo leer {a.name}: {e}")
+            continue
+        df["archivo_origen"] = a.name
+        partes.append(df)
+        resumen.append({"Archivo": a.name, "Filas": len(df)})
+    if not partes:
+        return pd.DataFrame(), pd.DataFrame(resumen)
+
+    datos = pd.concat(partes, ignore_index=True)
+    antes = len(datos)
+    if all(c in datos.columns for c in CLAVE_VISITA):
+        datos = datos.drop_duplicates(subset=CLAVE_VISITA, keep="last")
+    else:
+        datos = datos.drop_duplicates(subset=[c for c in datos.columns if c != "archivo_origen"], keep="last")
+    st.session_state["duplicadas"] = antes - len(datos)
+    return datos.reset_index(drop=True), pd.DataFrame(resumen)
 
 
 def datos_demo() -> pd.DataFrame:
@@ -251,21 +282,39 @@ st.markdown(f'<p class="subtitulo">Objetivo: {OBJETIVO:.0f}% notificado con más
 # ----------------------------------------------------------------------
 # Carga de archivo (principal + sidebar; ambos comparten la misma fuente)
 # ----------------------------------------------------------------------
-sub_sidebar = st.sidebar.file_uploader("📂 Cargar CSV/Excel", type=["csv", "xlsx", "xls"], key="up_side")
-sub_main = st.file_uploader("📂 Cargar o actualizar archivo de rutas (CSV/Excel)",
-                            type=["csv", "xlsx", "xls"], key="up_main")
-archivo = sub_main if sub_main is not None else sub_sidebar
+tipos = ["csv", "xlsx", "xls"]
+sub_sidebar = st.sidebar.file_uploader("📂 Cargar CSV/Excel (uno o varios)", type=tipos,
+                                       accept_multiple_files=True, key="up_side")
+sub_main = st.file_uploader("📂 Cargar o actualizar archivos de rutas (podés subir varios CSV/Excel)",
+                            type=tipos, accept_multiple_files=True, key="up_main")
 
-if archivo is not None:
-    bruto = leer_archivo(archivo)
-    origen = f"Archivo cargado: {archivo.name}"
+# Ambos uploaders alimentan el dashboard; si un archivo está en los dos, se usa una sola vez
+archivos, vistos = [], set()
+for a in list(sub_main or []) + list(sub_sidebar or []):
+    if (a.name, a.size) not in vistos:
+        vistos.add((a.name, a.size))
+        archivos.append(a)
+
+resumen_archivos = pd.DataFrame()
+if archivos:
+    bruto, resumen_archivos = unir_archivos(archivos)
+    if bruto.empty:
+        st.error("Ningún archivo pudo leerse.")
+        st.stop()
+    dup = st.session_state.get("duplicadas", 0)
+    origen = f"{len(resumen_archivos)} archivo(s) cargado(s) · {len(bruto)} filas"
+    if dup:
+        origen += f" · {dup} filas repetidas descartadas"
 elif Path(ARCHIVO_DEFECTO).exists():
     bruto = leer_archivo(ARCHIVO_DEFECTO)
     origen = f"Archivo local: {ARCHIVO_DEFECTO}"
 else:
     bruto = datos_demo()
-    origen = "Datos de demostración (cargá un archivo para ver datos reales)"
+    origen = "Datos de demostración (cargá uno o varios archivos para ver datos reales)"
 st.caption(origen)
+if not resumen_archivos.empty:
+    with st.expander("Archivos incluidos"):
+        st.dataframe(resumen_archivos, use_container_width=True, hide_index=True)
 
 datos = preparar(bruto)
 if datos.empty:
