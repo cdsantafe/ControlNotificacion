@@ -16,6 +16,7 @@ import streamlit as st
 OBJETIVO = 88.0                      # % objetivo de notificación > 2 min
 ARCHIVO_DEFECTO = "routes-data_2026-10-19_14h1m.csv"
 COLUMNAS_REQ = ["driver_name", "driver_notification_time", "arrived_at"]
+ZONA_LOCAL = "America/Argentina/Buenos_Aires"   # las marcas ISO8601 vienen en UTC
 
 st.set_page_config(page_title="Notificación al Cliente", page_icon="📲", layout="wide")
 
@@ -101,6 +102,9 @@ def preparar(df: pd.DataFrame) -> pd.DataFrame:
     df["anticipacion_seg"] = (df["arrived_at"] - df["driver_notification_time"]).dt.total_seconds()
     df["cumple_2"] = df["anticipacion_seg"] >= 120
     df["cumple_5"] = df["anticipacion_seg"] >= 300
+
+    # Hora local de la visita (para analizar la evolución durante el día)
+    df["hora"] = df["arrived_at"].dt.tz_convert(ZONA_LOCAL).dt.hour
     return df
 
 
@@ -256,6 +260,27 @@ with tab2:
     fig.add_hline(y=OBJETIVO, line_dash="dash", line_color="green", annotation_text=f"Objetivo {OBJETIVO:.0f}%")
     fig.update_layout(yaxis_range=[0, 105], xaxis_title=frecuencia, yaxis_title="% cumplimiento")
     st.plotly_chart(fig, use_container_width=True)
+
+    # --- Evolución a lo largo del horario del día ---
+    st.subheader("Evolución según la hora del día")
+    hor = (d.groupby("hora")
+             .agg(Visitas=("arrived_at", "size"),
+                  **{"% > 2 min": ("cumple_2", "mean"), "% > 5 min": ("cumple_5", "mean")})
+             .reset_index())
+    hor[["% > 2 min", "% > 5 min"]] *= 100
+    hor["Franja"] = hor["hora"].astype(str).str.zfill(2) + ":00"
+
+    fig_h = px.line(hor.melt(["hora", "Franja", "Visitas"], var_name="Métrica", value_name="%"),
+                    x="Franja", y="%", color="Métrica", markers=True, hover_data=["Visitas"],
+                    color_discrete_sequence=["#D32F2F", "#F9A825"])
+    fig_h.add_hline(y=OBJETIVO, line_dash="dash", line_color="green", annotation_text=f"Objetivo {OBJETIVO:.0f}%")
+    fig_h.update_layout(yaxis_range=[0, 105], xaxis_title="Hora de llegada al cliente (hora local)",
+                        yaxis_title="% cumplimiento")
+    st.plotly_chart(fig_h, use_container_width=True)
+
+    fig_v = px.bar(hor, x="Franja", y="Visitas", color_discrete_sequence=["#FFC933"])
+    fig_v.update_layout(height=220, xaxis_title=None, yaxis_title="Visitas evaluadas")
+    st.plotly_chart(fig_v, use_container_width=True)
 
 with tab3:
     inc = d[~d["cumple_2"]].copy()
