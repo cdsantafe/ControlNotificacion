@@ -344,56 +344,58 @@ def tabla_componente(tabla: pd.DataFrame, cols_num: list, cols_pct: list,
 
 
 def generar_jpeg(tabla: pd.DataFrame, etiqueta: str) -> bytes:
-    """Genera una imagen JPEG del dashboard: encabezado y tabla (GENERAL destacada)."""
+    """Imagen JPEG pensada para verse en el celular sin abrirla: formato vertical, letra grande y celdas compactas."""
     c2, c5 = "Notificaciones mayores a 2 minutos", "Notificaciones mayores a 5 minutos"
     gral = tabla[tabla["CHOFER"] == "GENERAL"].iloc[0]
     chof = tabla[tabla["CHOFER"] != "GENERAL"]
 
-    # Alturas de fila (unidades) y tamaño de la figura (pulgadas)
-    h_cab, h_gral, h_fila = 1.3, 1.9, 0.8
-    unidades = h_cab + h_gral + h_fila * len(chof)
-    tabla_in, base_tabla, tope = unidades * 0.4, 0.4, 1.5
-    alto = base_tabla + tabla_in + tope
-    fig = plt.figure(figsize=(13, alto), dpi=130, facecolor="white")
+    # Medidas en pulgadas (ancho fijo 7": se ve completo en una pantalla de celular)
+    ancho, h_cab, h_gral, h_fila, tope, base = 7.0, 0.95, 1.0, 0.52, 1.55, 0.1
+    tabla_in = h_cab + h_gral + h_fila * len(chof)
+    alto = base + tabla_in + tope
+    fig = plt.figure(figsize=(ancho, alto), dpi=220, facecolor="white")
 
     # Encabezado
-    fig.text(0.03, 1 - 0.25 / alto, "TAREA CRÍTICA: NOTIFICACIÓN AL CLIENTE", color="#D32F2F",
-             fontsize=24, fontweight="bold", va="top")
-    fig.text(0.03, 1 - 0.80 / alto, f"Objetivo: {OBJETIVO:.0f}% de los clientes notificados con más de 2 minutos de anticipación",
-             color="#444", fontsize=14, fontweight="bold", va="top")
-    fig.text(0.03, 1 - 1.15 / alto, f"FECHA: {etiqueta}", color="#444", fontsize=12, va="top")
+    fig.text(0.02, 1 - 0.12 / alto, "TAREA CRÍTICA:\nNOTIFICACIÓN AL CLIENTE", color="#D32F2F",
+             fontsize=21, fontweight="bold", va="top", linespacing=1.05)
+    fig.text(0.02, 1 - 0.88 / alto,
+             "Objetivo: 88% de los clientes notificados con más\nde 2 minutos de anticipación".replace("88", f"{OBJETIVO:.0f}"),
+             color="#333", fontsize=13, fontweight="bold", va="top", linespacing=1.1)
+    fig.text(0.02, 1 - 1.33 / alto, f"FECHA: {etiqueta}", color="#333", fontsize=13, va="top")
 
-    # Tabla dibujada a mano
-    ax = fig.add_axes([0.03, base_tabla / alto, 0.94, tabla_in / alto])
-    ax.set_xlim(0, 100); ax.set_ylim(unidades, 0); ax.axis("off")
-    anchos = [34, 12, 27, 27]
+    # Tabla dibujada a mano, pegada a los bordes
+    ax = fig.add_axes([0.01, base / alto, 0.98, tabla_in / alto])
+    ax.set_xlim(0, 100); ax.set_ylim(tabla_in, 0); ax.axis("off")
+    anchos = [37, 13, 25, 25]
     xs = np.cumsum([0] + anchos)
 
-    def celda(i, y, h, texto, fondo, color="#222", size=11, peso="normal", borde="#cccccc", lw=0.8, ha="center"):
+    def celda(i, y, h, texto, fondo, color="#222", size=15, peso="normal", borde="#bbbbbb", lw=0.6, ha="center"):
         ax.add_patch(Rectangle((xs[i], y), anchos[i], h, facecolor=fondo, edgecolor=borde, linewidth=lw))
-        x_txt = xs[i] + (1.2 if ha == "left" else anchos[i] / 2)
-        ax.text(x_txt, y + h / 2, texto, ha=ha, va="center", fontsize=size, color=color, fontweight=peso)
+        x_txt = xs[i] + (1.5 if ha == "left" else anchos[i] / 2)
+        ax.text(x_txt, y + h / 2, texto, ha=ha, va="center", fontsize=size, color=color, fontweight=peso,
+                linespacing=1.05)
 
-    for i, t in enumerate(["CHOFER", "Clientes", "Notificaciones mayores\na 2 minutos",
-                           "Notificaciones mayores\na 5 minutos"]):
-        celda(i, 0, h_cab, t, "#FFC933", size=11, peso="bold", borde="#d9a800")
+    for i, t in enumerate(["CHOFER", "Clientes", "Notificaciones\nmayores a\n2 minutos",
+                           "Notificaciones\nmayores a\n5 minutos"]):
+        celda(i, 0, h_cab, t, "#FFC933", size=13, peso="bold", borde="#d9a800", lw=0.8)
 
     y = h_cab                                             # fila GENERAL
     ok2, ok5 = gral[c2] >= OBJETIVO, gral[c5] >= OBJETIVO
-    celda(0, y, h_gral, "GENERAL", "#FFB300", size=20, peso="bold", ha="left")
-    celda(1, y, h_gral, f"{int(gral['Clientes'])}", "#FFE082", size=20, peso="bold")
-    celda(2, y, h_gral, f"{gral[c2]:.0f}%", "#2E7D32" if ok2 else "#C62828", "white", 22, "bold")
-    celda(3, y, h_gral, f"{gral[c5]:.0f}%", "#2E7D32" if ok5 else "#C62828", "white", 22, "bold")
-    ax.add_patch(Rectangle((0, y), 100, h_gral, fill=False, edgecolor="#D32F2F", linewidth=3.5))
+    celda(0, y, h_gral, "GENERAL", "#FFB300", size=26, peso="bold", ha="left")
+    celda(1, y, h_gral, f"{int(gral['Clientes'])}", "#FFE082", size=26, peso="bold")
+    celda(2, y, h_gral, f"{gral[c2]:.0f}%", "#2E7D32" if ok2 else "#C62828", "white", 30, "bold")
+    celda(3, y, h_gral, f"{gral[c5]:.0f}%", "#2E7D32" if ok5 else "#C62828", "white", 30, "bold")
+    ax.add_patch(Rectangle((0, y), 100, h_gral, fill=False, edgecolor="#D32F2F", linewidth=3))
 
     y += h_gral                                           # choferes
     for _, r in chof.iterrows():
-        celda(0, y, h_fila, str(r["CHOFER"]), "white", ha="left")
-        celda(1, y, h_fila, f"{int(r['Clientes'])}", "white")
+        nombre = str(r["CHOFER"])
+        celda(0, y, h_fila, nombre, "white", size=14 if len(nombre) <= 17 else 12, ha="left")
+        celda(1, y, h_fila, f"{int(r['Clientes'])}", "white", size=15)
         for i, col in ((2, c2), (3, c5)):
             bien = r[col] >= OBJETIVO
             celda(i, y, h_fila, f"{r[col]:.0f}%", "#C8E6C9" if bien else "#FFCDD2",
-                  "#1B5E20" if bien else "#B71C1C", peso="bold")
+                  "#1B5E20" if bien else "#B71C1C", size=17, peso="bold")
         y += h_fila
 
     buf = BytesIO()
