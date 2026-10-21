@@ -160,6 +160,67 @@ def preparar(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+ESTADOS_FINALES = {"CONCLUDED", "DEFINITELY_RETURNED", "RETURNED", "CANCELLED", "CANCELED",
+                   "SKIPPED", "REJECTED", "CLOSED", "FINISHED"}
+
+
+def preparar_pendientes(df: pd.DataFrame) -> pd.DataFrame:
+    """Visitas que aún no se realizaron: ruta iniciada, sin arribo ni cierre, no saltadas ni devueltas."""
+    df = df.copy()
+
+    def fecha_dt(col):
+        return pd.to_datetime(df[col], utc=True, errors="coerce", format="ISO8601") if col in df.columns \
+            else pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns, UTC]")
+
+    def texto(col):
+        return df[col].astype(str).str.strip().str.upper() if col in df.columns \
+            else pd.Series("", index=df.index)
+
+    if "tour_date" in df.columns:
+        fecha = pd.to_datetime(df["tour_date"], errors="coerce")
+    elif "trip_start_timestamp" in df.columns:
+        fecha = fecha_dt("trip_start_timestamp").dt.tz_localize(None)
+    else:
+        fecha = pd.Series(pd.NaT, index=df.index)
+    df["fecha"] = fecha.dt.normalize()
+
+    saltada = texto("skipped_reason").isin(["TRUE", "1"])
+    pend = (
+        fecha_dt("arrived_at").isna() & fecha_dt("finished_at").isna()
+        & fecha_dt("trip_start_timestamp").notna()          # ruta iniciada
+        & ~texto("status").isin(ESTADOS_FINALES)
+        & ~texto("tour_status").isin(ESTADOS_FINALES)
+        & ~saltada & df["fecha"].notna()
+    )
+    if "tour_display_id" not in df.columns:
+        df["tour_display_id"] = "N/D"
+    return df[pend]
+
+
+def tabla_proyeccion(d: pd.DataFrame, pend: pd.DataFrame) -> pd.DataFrame:
+    """Por chofer: realizados, restantes, % actual y máximo alcanzable si se notifica todo lo restante."""
+    real = d.groupby("driver_name").agg(R=("arrived_at", "size"), k2=("cumple_2", "sum"), k5=("cumple_5", "sum"))
+    rest = pend.groupby("driver_name").size().rename("P")
+    t = real.join(rest, how="outer").fillna(0).reset_index()
+    t = t.rename(columns={"index": "driver_name"})
+    gral = pd.DataFrame([{"driver_name": "GENERAL", "R": t["R"].sum(), "k2": t["k2"].sum(),
+                          "k5": t["k5"].sum(), "P": t["P"].sum()}])
+    t = t.assign(_o=t["k2"] / t["R"].where(t["R"] > 0)).sort_values("_o", ascending=False, na_position="last")
+    t = pd.concat([gral, t.drop(columns="_o")], ignore_index=True)
+
+    tot = (t["R"] + t["P"]).where((t["R"] + t["P"]) > 0)
+    out = pd.DataFrame({
+        "CHOFER": t["driver_name"],
+        "Clientes realizados": t["R"].astype(int),
+        "Clientes restantes": t["P"].astype(int),
+        "% mayor a 2 min (actual)": t["k2"] / t["R"].where(t["R"] > 0) * 100,
+        "% mayor a 5 min (actual)": t["k5"] / t["R"].where(t["R"] > 0) * 100,
+        "Máx. posible mayor a 2 min": (t["k2"] + t["P"]) / tot * 100,   # todos los restantes notificados bien
+        "Máx. posible mayor a 5 min": (t["k5"] + t["P"]) / tot * 100,
+    })
+    return out
+
+
 def asignar_periodo(df: pd.DataFrame, frecuencia: str) -> pd.DataFrame:
     """Agrega la columna 'periodo' según la frecuencia elegida."""
     df = df.copy()
@@ -265,6 +326,9 @@ def tabla_componente(tabla: pd.DataFrame, cols_num: list, cols_pct: list,
         for c in cols_num:
             celdas.append(f'<td class="cli" data-v="{int(r[c])}">{int(r[c])}</td>')
         for c in cols_pct:
+            if pd.isna(r[c]):                      # sin datos (ej.: chofer sin visitas realizadas)
+                celdas.append('<td data-v="-1">–</td>')
+                continue
             k = "ok" if r[c] >= objetivo else "bad"
             celdas.append(f'<td class="{k}" data-v="{r[c]:.4f}">{r[c]:.0f}%</td>')
         return f'<tr class="{clase_tr}">' + "".join(celdas) + "</tr>"
@@ -459,7 +523,7 @@ general = pd.DataFrame([{
 }])
 tabla = pd.concat([general, tabla], ignore_index=True)
 
-tab1, tab2, tab3, tab4 = st.tabs(["📋 Por chofer", "📈 Evolución", "⚠️ Visitas < 2 min", "📍 Click en radio"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Por chofer", "📈 Evolución", "⚠️ Visitas < 2 min", "📍 Click en radio", "🎯 Máximo alcanzable"])
 
 with tab1:
     html_tabla, alto_tabla = tabla_componente(
@@ -558,3 +622,24 @@ with tab4:
                 det = fuera[[c for c in cols if c in fuera.columns]].rename(columns=cols).copy()
                 det["Fecha"] = det["Fecha"].dt.strftime("%Y-%m-%d")
                 st.dataframe(det, use_container_width=True, hide_index=True)
+
+with tab5:
+    st.subheader("Máximo alcanzable si se notifica correctamente el resto de la ruta")
+    pend = preparar_pendientes(bruto)
+    pend = pend[
+        (pend["fecha"].dt.date >= desde) & (pend["fecha"].dt.date <= hasta)
+        & pend["driver_name"].isin(sel_ch) & pend["tour_display_id"].astype(str).isin(sel_pl)
+    ]
+    proy = tabla_proyeccion(d, pend)
+    cn = ["Clientes realizados", "Clientes restantes"]
+    cp = ["% mayor a 2 min (actual)", "% mayor a 5 min (actual)",
+          "Máx. posible mayor a 2 min", "Máx. posible mayor a 5 min"]
+    st.markdown(f"**FECHA:** {etiqueta}  ·  Objetivo: {OBJETIVO:.0f}%")
+    html_p, alto_p = tabla_componente(proy, cn, cp)
+    components.html(html_p, height=alto_p, scrolling=True)
+    st.caption("Máx. posible = (notificaciones correctas hasta ahora + clientes restantes) / "
+               "(realizados + restantes). En rojo, el chofer ya no puede llegar al objetivo.")
+    if int(proy.loc[0, "Clientes restantes"]) == 0:
+        st.info("No se detectaron clientes restantes: las rutas del archivo están cerradas o sin visitas pendientes.")
+    st.download_button("⬇️ Descargar Excel (proyección)", a_excel(proy.round(1)), "maximo_alcanzable.xlsx",
+                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
