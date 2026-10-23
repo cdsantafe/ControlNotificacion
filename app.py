@@ -353,24 +353,27 @@ def generar_jpeg(tabla: pd.DataFrame, etiqueta: str, titulo: str, subtitulo: str
     n_lin_tit = titulo.count("\n") + 1
 
     # Medidas en pulgadas (ancho fijo 7": se ve completo en una pantalla de celular)
-    ancho, h_cab, h_gral, h_fila, base = 7.0, 0.95, 1.0, 0.52, 0.1
+    ancho_tab, h_cab, h_gral, h_fila, base = 7.0, 0.95, 1.0, 0.52, 0.1
     n_lin_sub = subtitulo.count("\n") + 1
     y_obj = 0.12 + 0.38 * n_lin_tit               # posición del subtítulo (pulgadas desde arriba)
     y_fecha = y_obj + 0.225 * n_lin_sub           # posición de la línea FECHA
     tope = y_fecha + 0.22
     tabla_in = h_cab + h_gral + h_fila * len(chof)
     alto = base + tabla_in + tope
+    # Lienzo más cuadrado: ancho ~3/4 del alto (máx. 12"), con espacio en blanco a los lados
+    ancho = min(12.0, max(ancho_tab, alto * 0.75))
+    mx = (ancho - ancho_tab) / 2 / ancho          # margen lateral (fracción del ancho)
     fig = plt.figure(figsize=(ancho, alto), dpi=220, facecolor="white")
 
     # Encabezado
-    fig.text(0.02, 1 - 0.12 / alto, titulo, color="#D32F2F", fontsize=21, fontweight="bold",
+    fig.text(mx + 0.14 / ancho, 1 - 0.12 / alto, titulo, color="#D32F2F", fontsize=21, fontweight="bold",
              va="top", linespacing=1.05)
-    fig.text(0.02, 1 - y_obj / alto, subtitulo, color="#333", fontsize=13, fontweight="bold",
+    fig.text(mx + 0.14 / ancho, 1 - y_obj / alto, subtitulo, color="#333", fontsize=13, fontweight="bold",
              va="top", linespacing=1.1)
-    fig.text(0.02, 1 - y_fecha / alto, f"FECHA: {etiqueta}", color="#333", fontsize=13, va="top")
+    fig.text(mx + 0.14 / ancho, 1 - y_fecha / alto, f"FECHA: {etiqueta}", color="#333", fontsize=13, va="top")
 
     # Tabla dibujada a mano, pegada a los bordes
-    ax = fig.add_axes([0.01, base / alto, 0.98, tabla_in / alto])
+    ax = fig.add_axes([mx + 0.07 / ancho, base / alto, (ancho_tab - 0.14) / ancho, tabla_in / alto])
     ax.set_xlim(0, 100); ax.set_ylim(tabla_in, 0); ax.axis("off")
     xs = np.cumsum([0] + list(anchos))
 
