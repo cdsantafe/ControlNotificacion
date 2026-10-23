@@ -256,15 +256,16 @@ PLANTILLA_TABLA = """
   .barra button {border:1px solid #d9a800; background:#FFF8E1; border-radius:6px; padding:6px 12px;
                  cursor:pointer; font-size:.9rem;}
   .barra button:hover {background:#FFC933;}
-  table {width:100%; border-collapse:collapse;}
-  th {background:#FFC933; color:#222; padding:10px; text-align:center; border:1px solid #d9a800;
+  table {width:auto; max-width:__ANCHO__px; border-collapse:collapse;}
+  #wrap:fullscreen table {width:100%; max-width:none;}
+  th {background:#FFC933; color:#222; padding:6px 8px; font-size:.95rem; text-align:center; border:1px solid #d9a800;
       cursor:pointer; user-select:none;}
   th:hover {background:#FFB300;}
-  td {padding:8px 10px; text-align:center; border:1px solid #e0e0e0; font-size:1rem;}
+  td {padding:5px 8px; text-align:center; border:1px solid #e0e0e0; font-size:1.15rem; font-weight:600;}
   td.nom {text-align:left;}
   td.ok  {background:#C8E6C9; color:#1B5E20;}
   td.bad {background:#FFCDD2; color:#B71C1C;}
-  tr.gral td {font-size:1.6rem; font-weight:800; padding:16px 10px;
+  tr.gral td {font-size:1.8rem; font-weight:800; padding:10px 8px;
               border-top:4px solid #D32F2F; border-bottom:4px solid #D32F2F;}
   tr.gral td.nom {background:#FFB300; color:#222; letter-spacing:1px;}
   tr.gral td.cli {background:#FFE082; color:#222;}
@@ -317,7 +318,7 @@ PLANTILLA_TABLA = """
 
 
 def tabla_componente(tabla: pd.DataFrame, cols_num: list, cols_pct: list,
-                     objetivo: float = OBJETIVO) -> tuple[str, int]:
+                     objetivo: float = OBJETIVO, ancho: int = 560) -> tuple[str, int]:
     """Tabla HTML ordenable (clic en encabezados) con la fila GENERAL fija arriba.
     cols_num: columnas de conteo; cols_pct: columnas de porcentaje coloreadas según el objetivo."""
 
@@ -337,37 +338,41 @@ def tabla_componente(tabla: pd.DataFrame, cols_num: list, cols_pct: list,
     choferes = tabla[tabla["CHOFER"] != "GENERAL"]
     titulos = "".join(f"<th>{escape(c)}</th>" for c in ["CHOFER", *cols_num, *cols_pct])
     cabecera = f"<thead><tr>{titulos}</tr>{fila(gral, 'gral')}</thead>"
-    html = (PLANTILLA_TABLA.replace("__CABECERA__", cabecera)
+    html = (PLANTILLA_TABLA.replace("__ANCHO__", str(ancho)).replace("__CABECERA__", cabecera)
             .replace("__FILAS__", "".join(fila(r) for _, r in choferes.iterrows())))
     alto = min(190 + 38 * len(choferes), 800)
     return html, alto
 
 
-def generar_jpeg(tabla: pd.DataFrame, etiqueta: str) -> bytes:
-    """Imagen JPEG pensada para verse en el celular sin abrirla: formato vertical, letra grande y celdas compactas."""
-    c2, c5 = "Notificaciones mayores a 2 minutos", "Notificaciones mayores a 5 minutos"
+def generar_jpeg(tabla: pd.DataFrame, etiqueta: str, titulo: str, subtitulo: str, titulos: list,
+                 cols_num: list, cols_pct: list, anchos: list, objetivo: float = OBJETIVO) -> bytes:
+    """Imagen JPEG pensada para verse en el celular sin abrirla: formato vertical, letra grande y celdas compactas.
+    titulos: encabezados de columna (con \\n para partir líneas); anchos: ancho de cada columna (suma 100)."""
     gral = tabla[tabla["CHOFER"] == "GENERAL"].iloc[0]
     chof = tabla[tabla["CHOFER"] != "GENERAL"]
+    n_lin_tit = titulo.count("\n") + 1
 
     # Medidas en pulgadas (ancho fijo 7": se ve completo en una pantalla de celular)
-    ancho, h_cab, h_gral, h_fila, tope, base = 7.0, 0.95, 1.0, 0.52, 1.55, 0.1
+    ancho, h_cab, h_gral, h_fila, base = 7.0, 0.95, 1.0, 0.52, 0.1
+    n_lin_sub = subtitulo.count("\n") + 1
+    y_obj = 0.12 + 0.38 * n_lin_tit               # posición del subtítulo (pulgadas desde arriba)
+    y_fecha = y_obj + 0.225 * n_lin_sub           # posición de la línea FECHA
+    tope = y_fecha + 0.22
     tabla_in = h_cab + h_gral + h_fila * len(chof)
     alto = base + tabla_in + tope
     fig = plt.figure(figsize=(ancho, alto), dpi=220, facecolor="white")
 
     # Encabezado
-    fig.text(0.02, 1 - 0.12 / alto, "TAREA CRÍTICA:\nNOTIFICACIÓN AL CLIENTE", color="#D32F2F",
-             fontsize=21, fontweight="bold", va="top", linespacing=1.05)
-    fig.text(0.02, 1 - 0.88 / alto,
-             "Objetivo: 88% de los clientes notificados con más\nde 2 minutos de anticipación".replace("88", f"{OBJETIVO:.0f}"),
-             color="#333", fontsize=13, fontweight="bold", va="top", linespacing=1.1)
-    fig.text(0.02, 1 - 1.33 / alto, f"FECHA: {etiqueta}", color="#333", fontsize=13, va="top")
+    fig.text(0.02, 1 - 0.12 / alto, titulo, color="#D32F2F", fontsize=21, fontweight="bold",
+             va="top", linespacing=1.05)
+    fig.text(0.02, 1 - y_obj / alto, subtitulo, color="#333", fontsize=13, fontweight="bold",
+             va="top", linespacing=1.1)
+    fig.text(0.02, 1 - y_fecha / alto, f"FECHA: {etiqueta}", color="#333", fontsize=13, va="top")
 
     # Tabla dibujada a mano, pegada a los bordes
     ax = fig.add_axes([0.01, base / alto, 0.98, tabla_in / alto])
     ax.set_xlim(0, 100); ax.set_ylim(tabla_in, 0); ax.axis("off")
-    anchos = [37, 13, 25, 25]
-    xs = np.cumsum([0] + anchos)
+    xs = np.cumsum([0] + list(anchos))
 
     def celda(i, y, h, texto, fondo, color="#222", size=15, peso="normal", borde="#bbbbbb", lw=0.6, ha="center"):
         ax.add_patch(Rectangle((xs[i], y), anchos[i], h, facecolor=fondo, edgecolor=borde, linewidth=lw))
@@ -375,26 +380,28 @@ def generar_jpeg(tabla: pd.DataFrame, etiqueta: str) -> bytes:
         ax.text(x_txt, y + h / 2, texto, ha=ha, va="center", fontsize=size, color=color, fontweight=peso,
                 linespacing=1.05)
 
-    for i, t in enumerate(["CHOFER", "Clientes", "Notificaciones\nmayores a\n2 minutos",
-                           "Notificaciones\nmayores a\n5 minutos"]):
+    for i, t in enumerate(titulos):
         celda(i, 0, h_cab, t, "#FFC933", size=13, peso="bold", borde="#d9a800", lw=0.8)
 
+    n_num = len(cols_num)
     y = h_cab                                             # fila GENERAL
-    ok2, ok5 = gral[c2] >= OBJETIVO, gral[c5] >= OBJETIVO
     celda(0, y, h_gral, "GENERAL", "#FFB300", size=26, peso="bold", ha="left")
-    celda(1, y, h_gral, f"{int(gral['Clientes'])}", "#FFE082", size=26, peso="bold")
-    celda(2, y, h_gral, f"{gral[c2]:.0f}%", "#2E7D32" if ok2 else "#C62828", "white", 30, "bold")
-    celda(3, y, h_gral, f"{gral[c5]:.0f}%", "#2E7D32" if ok5 else "#C62828", "white", 30, "bold")
+    for j, c in enumerate(cols_num):
+        celda(1 + j, y, h_gral, f"{int(gral[c])}", "#FFE082", size=26, peso="bold")
+    for j, c in enumerate(cols_pct):
+        ok = gral[c] >= objetivo
+        celda(1 + n_num + j, y, h_gral, f"{gral[c]:.0f}%", "#2E7D32" if ok else "#C62828", "white", 30, "bold")
     ax.add_patch(Rectangle((0, y), 100, h_gral, fill=False, edgecolor="#D32F2F", linewidth=3))
 
     y += h_gral                                           # choferes
     for _, r in chof.iterrows():
         nombre = str(r["CHOFER"])
         celda(0, y, h_fila, nombre, "white", size=14 if len(nombre) <= 17 else 12, ha="left")
-        celda(1, y, h_fila, f"{int(r['Clientes'])}", "white", size=15)
-        for i, col in ((2, c2), (3, c5)):
-            bien = r[col] >= OBJETIVO
-            celda(i, y, h_fila, f"{r[col]:.0f}%", "#C8E6C9" if bien else "#FFCDD2",
+        for j, c in enumerate(cols_num):
+            celda(1 + j, y, h_fila, f"{int(r[c])}", "white", size=15)
+        for j, c in enumerate(cols_pct):
+            bien = r[c] >= objetivo
+            celda(1 + n_num + j, y, h_fila, f"{r[c]:.0f}%", "#C8E6C9" if bien else "#FFCDD2",
                   "#1B5E20" if bien else "#B71C1C", size=17, peso="bold")
         y += h_fila
 
@@ -525,7 +532,7 @@ general = pd.DataFrame([{
 }])
 tabla = pd.concat([general, tabla], ignore_index=True)
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Por chofer", "📈 Evolución", "⚠️ Visitas < 2 min", "📍 Click en radio", "🎯 Máximo alcanzable"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Por chofer", "📈 Evolución", "⚠️ Visitas < 2 min", "📍 Adherencia al radio", "🎯 Máximo alcanzable"])
 
 with tab1:
     html_tabla, alto_tabla = tabla_componente(
@@ -537,7 +544,12 @@ with tab1:
     col_x.download_button("⬇️ Descargar Excel", a_excel(tabla.round(1)), "notificacion_por_chofer.xlsx",
                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     try:
-        col_j.download_button("🖼️ Descargar imagen (JPEG)", generar_jpeg(tabla, etiqueta),
+        col_j.download_button("🖼️ Descargar imagen (JPEG)", generar_jpeg(
+            tabla, etiqueta, "TAREA CRÍTICA:\nNOTIFICACIÓN AL CLIENTE",
+            f"Objetivo: {OBJETIVO:.0f}% de los clientes notificados con más\nde 2 minutos de anticipación",
+            ["CHOFER", "Clientes", "Notificaciones\nmayores a\n2 minutos", "Notificaciones\nmayores a\n5 minutos"],
+            ["Clientes"], ["Notificaciones mayores a 2 minutos", "Notificaciones mayores a 5 minutos"],
+            [37, 13, 25, 25]),
                               "dashboard_notificacion.jpeg", "image/jpeg")
     except Exception as e:
         col_j.warning(f"No se pudo generar la imagen: {e}")
@@ -587,7 +599,7 @@ with tab3:
     st.dataframe(vista, use_container_width=True, hide_index=True)
 
 with tab4:
-    st.subheader("% de click en el radio")
+    st.subheader("Adherencia al radio (% de click en el radio)")
     if "within_radius" not in d.columns:
         st.warning("El archivo no tiene la columna within_radius.")
     else:
@@ -609,12 +621,23 @@ with tab4:
             tr = pd.concat([gr, tr], ignore_index=True)
 
             st.markdown(f"**FECHA:** {etiqueta}  ·  Objetivo: {objetivo_radio}%")
-            html_r, alto_r = tabla_componente(tr, [c_cli, c_fuera], [c_pct], objetivo_radio)
+            html_r, alto_r = tabla_componente(tr, [c_cli, c_fuera], [c_pct], objetivo_radio, ancho=520)
             components.html(html_r, height=alto_r, scrolling=True)
             st.caption("Solo planillas con ruta iniciada y entregas con hora de arribo. "
                        "Hacé clic en un encabezado para ordenar.")
-            st.download_button("⬇️ Descargar Excel (radio)", a_excel(tr.round(1)), "click_en_radio.xlsx",
+            bx, bj, _ = st.columns([1, 1, 3])
+            bx.download_button("⬇️ Descargar Excel", a_excel(tr.round(1)), "adherencia_radio.xlsx",
                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            try:
+                bj.download_button(
+                    "🖼️ Descargar imagen (JPEG)",
+                    generar_jpeg(tr, etiqueta, "ADHERENCIA AL RADIO",
+                                 f"Objetivo: {objetivo_radio}% de los clientes con\nclick dentro del radio",
+                                 ["CHOFER", "Clientes", "Fuera del\nradio", "Click en\nel radio"],
+                                 [c_cli, c_fuera], [c_pct], [36, 16, 20, 28], objetivo_radio),
+                    "adherencia_radio.jpeg", "image/jpeg", key="jpeg_radio")
+            except Exception as e:
+                bj.warning(f"No se pudo generar la imagen: {e}")
 
             fuera = r[~r["en_radio"]]
             if not fuera.empty:
@@ -637,7 +660,7 @@ with tab5:
     cp = ["% mayor a 2 min (actual)", "% mayor a 5 min (actual)",
           "Máx. posible mayor a 2 min", "Máx. posible mayor a 5 min"]
     st.markdown(f"**FECHA:** {etiqueta}  ·  Objetivo: {OBJETIVO:.0f}%")
-    html_p, alto_p = tabla_componente(proy, cn, cp)
+    html_p, alto_p = tabla_componente(proy, cn, cp, ancho=760)
     components.html(html_p, height=alto_p, scrolling=True)
     st.caption("Máx. posible = (notificaciones correctas hasta ahora + clientes restantes) / "
                "(realizados + restantes). En rojo, el chofer ya no puede llegar al objetivo.")
